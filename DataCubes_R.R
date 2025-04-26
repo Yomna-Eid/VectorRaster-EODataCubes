@@ -1,0 +1,381 @@
+library(terra)
+library(lubridate)
+library(stars)
+library(ggplot2)
+library(caret)
+library(ranger)
+
+library(dplyr)
+library(tidyr)
+################### Load LAI data ##################### 
+# List all LAI files
+lai_files <- list.files("./lai_cropped", pattern = "\\.tif$", full.names = TRUE)
+
+# Sort the files
+lai_files <- sort(lai_files)
+
+# Extract the timestamps from filenames
+file_names <- basename(lai_files)
+timestamps_str <- substr(file_names, nchar(file_names) - 18, nchar(file_names) - 4)
+timestamps <- ymd_hms(timestamps_str)
+
+# Read rasters into a list
+rasters <- lapply(lai_files, rast)
+
+#Stack them into a SpatRaster
+lai_stack <- rast(rasters)
+
+# Convert to stars object for time dimension support
+lai_stars <- st_as_stars(lai_stack)
+
+
+# Add time dimension
+lai_stars <- st_set_dimensions(lai_stars, 3, values = timestamps, names = "time")
+
+
+# Rename the variable
+names(lai_stars) <- "lai"
+
+# Plot one time stamp 
+# Convert stars object to data frame
+lai_df <- as.data.frame(lai_stars[,,,1], xy = TRUE)
+
+# Plot with ggplot
+ggplot(lai_df, aes(x = x, y = y, fill = lai)) +
+  geom_raster() +
+  scale_fill_viridis_c() +
+  coord_equal() +
+  labs(title = paste("LAI -", format(st_get_dimension_values(lai_stars, "time")[1])),
+       fill = "LAI")
+
+
+
+
+################### Load Sentinel-1 RTC Ascending ##################### 
+# List all Asc S1 RTC  files
+rtc_asc_files <- list.files("./RTC_asc_cropped", pattern = "\\.tif$", full.names = TRUE)
+
+# Sort the files
+rtc_asc_files <- sort(rtc_asc_files)
+
+# Extract timestamps from filenames
+file_names <- basename(rtc_asc_files)
+timestamps_str <- substr(file_names, nchar(file_names) - 11, nchar(file_names) - 4)
+timestamps <- as.POSIXct(ymd(timestamps_str))
+
+# Read stars object with 3 dimensions: x, y, bands
+stars_list <- lapply(rtc_asc_files, function(f) {
+  rast_obj <- rast(f)
+  st_as_stars(rast_obj)
+})
+
+# Combine all stars objects along a new "time" dimension
+rtc_asc_stars <- do.call(c, c(stars_list, along = "time"))
+
+# Add time dimension values & rename bands name
+rtc_asc_stars <- st_set_dimensions(rtc_asc_stars, 4, values = timestamps, names = "time")
+rtc_asc_stars <- st_set_dimensions(rtc_asc_stars, 3, values = c("vv_asc", "vh_asc"), names = "band")
+
+
+# Rename the variable
+names(rtc_asc_stars) <- "backscatter"
+
+# Feature engineering 
+## RVI
+vv <- rtc_asc_stars[, , , band = 1, drop = FALSE]
+vh <- rtc_asc_stars[, , , band = 2, drop = FALSE]
+rvi <- (4 * vv$backscatter) / (vv$backscatter + vh$backscatter)
+rvi_stars <- st_as_stars(rvi)
+names(rvi_stars) <- "asc_rvi"  # name the new variable
+rvi_stars <- st_set_dimensions(rvi_stars, 4, values = timestamps, names = "time")
+rvi_stars <- st_set_dimensions(rvi_stars, 3, values = "rvi_asc", names = "band")
+rtc_asc_stars = c(rtc_asc_stars, rvi_stars, along= "band")
+
+## VV/VH
+VV_VH <- vv$backscatter / vh$backscatter
+VV_VH_stars <- st_as_stars(VV_VH)
+names(VV_VH_stars) <- "asc_VV_VH"  # name the new variable
+VV_VH_stars <- st_set_dimensions(VV_VH_stars, 4, values = timestamps, names = "time")
+VV_VH_stars <- st_set_dimensions(VV_VH_stars, 3, values = "ratio_asc", names = "band")
+rtc_asc_stars = c(rtc_asc_stars, VV_VH_stars, along= "band")
+
+
+################### Load Sentinel-1 RTC Descending ##################### 
+# List all Dsc S1 RTC  files
+rtc_dsc_files <- list.files("./RTC_dsc_cropped", pattern = "\\.tif$", full.names = TRUE)
+
+# Sort the files
+rtc_dsc_files <- sort(rtc_dsc_files)
+
+# Extract timestamps from filenames
+file_names <- basename(rtc_dsc_files)
+timestamps_str <- substr(file_names, nchar(file_names) - 11, nchar(file_names) - 4)
+timestamps <- as.POSIXct(ymd(timestamps_str))
+#timestamps <- as.POSIXct(paste(timestamps_str, "12:00:00"))
+
+# Read stars object with 3 dimensions: x, y, bands
+stars_list <- lapply(rtc_dsc_files, function(f) {
+  rast_obj <- rast(f)
+  st_as_stars(rast_obj)
+})
+
+# Combine all stars objects along a new "time" dimension
+rtc_dsc_stars <- do.call(c, c(stars_list, along = "time"))
+
+# Add time dimension values
+rtc_dsc_stars <- st_set_dimensions(rtc_dsc_stars, 4, values = timestamps, names = "time")
+rtc_dsc_stars <- st_set_dimensions(rtc_dsc_stars, 3, values = c("vv_dsc", "vh_dsc"), names = "band")
+
+# Rename the variable
+names(rtc_dsc_stars) <- "backscatter"
+
+# Feature engineering
+## RVI
+vv <- rtc_dsc_stars[, , , band = 1, drop = FALSE]
+vh <- rtc_dsc_stars[, , , band = 2, drop = FALSE]
+rvi <- (4 * vv$backscatter) / (vv$backscatter + vh$backscatter)
+rvi_stars <- st_as_stars(rvi)
+names(rvi_stars) <- "dsc_rvi"  # name the new variable
+rvi_stars <- st_set_dimensions(rvi_stars, 4, values = timestamps, names = "time")
+rvi_stars <- st_set_dimensions(rvi_stars, 3, values = "rvi_dsc", names = "band")
+rtc_dsc_stars = c(rtc_dsc_stars, rvi_stars, along= "band")
+
+## VV/VH
+VV_VH <- vv$backscatter / vh$backscatter
+VV_VH_stars <- st_as_stars(VV_VH)
+names(VV_VH_stars) <- "asc_VV_VH"  # name the new variable
+VV_VH_stars <- st_set_dimensions(VV_VH_stars, 4, values = timestamps, names = "time")
+VV_VH_stars <- st_set_dimensions(VV_VH_stars, 3, values = "ratio_dsc", names = "band")
+rtc_dsc_stars = c(rtc_dsc_stars, VV_VH_stars, along= "band")
+
+
+########################## Data cubes Function #####################
+# Zonal statistcs 
+farms <- st_read("./new_farms/farms.shp")
+aggrigated_lai_farms = aggregate(lai_stars, by = farms, FUN = mean)
+plot(aggrigated_lai_farms, max.plot = 23, border = 'grey', lwd = .5)
+
+aggregated_rtc_dsc_farms = aggregate(rtc_dsc_stars, by = farms, FUN = mean)
+plot(aggregated_rtc_dsc_farms, max.plot = 23, border = 'grey', lwd = .5)
+
+aggregated_rtc_asc_farms = aggregate(rtc_asc_stars, by = farms, FUN = mean)
+plot(aggregated_rtc_asc_farms, max.plot = 23, border = 'grey', lwd = .5)
+
+# Extract points 
+pnt = st_sample(st_as_sfc(st_bbox(farms)), 500) # Random points
+extracted_lai = st_extract(lai_stars, pnt)
+
+centroids <- st_centroid(farms) # Centroids of the polygons 
+extracted_lai = st_extract(lai_stars, centroids)
+
+
+######## Indexing and selecting data
+# Select specific farm 
+farm_id <- 1782222
+# Select the specific farm by ID
+selected_farm <- farms[farms$ID == farm_id, ]
+# Extract the geometry of the selected farm
+farm <- selected_farm$geometry[1]
+#farm = farms$geometry[1]
+
+aggrigated_lai_farms[st_as_sf(farm)]
+
+## Add buffer around the farm
+buffered_farm <- st_buffer(farm, dist = 2500)  # distance is in meters
+aggrigated_lai_farms[st_as_sf(buffered_farm)]
+
+
+######################### Data Matching
+# Time values
+lai_times <- st_get_dimension_values(aggrigated_lai_farms, "time")
+asc_times <- st_get_dimension_values(aggregated_rtc_asc_farms, "time")
+dsc_times <- st_get_dimension_values(aggregated_rtc_dsc_farms, "time")
+
+# Initialize storage
+matched_lai <- list()
+matched_asc <- list()
+matched_dsc <- list()
+matched_dsc_times <- c()
+matched_asc_times <- c()
+matched_times <- c()
+
+
+# Tolerance in days
+tolerance_days <- 3
+
+for (i in seq_along(lai_times)) {
+  t1 <- lai_times[i]
+  # Find matches in asc and dsc
+  asc_diff <- abs(difftime(asc_times, t1, units = "days"))
+  dsc_diff <- abs(difftime(dsc_times, t1, units = "days"))
+  
+  asc_match_idx <- which(asc_diff <= tolerance_days)
+  dsc_match_idx <- which(dsc_diff <= tolerance_days)
+  
+  if (length(asc_match_idx) > 0 && length(dsc_match_idx) > 0) {
+    # Choose latest match in each
+    asc_time <- asc_times[asc_match_idx[length(asc_match_idx)]]
+    dsc_time <- dsc_times[dsc_match_idx[length(dsc_match_idx)]]
+    
+    # Only keep unique time match sets 
+    if ((!(asc_time %in% matched_asc_times)) && (!(dsc_time %in% matched_dsc_times))) {
+      matched_lai[[length(matched_lai) + 1]] <- aggrigated_lai_farms[,,i, drop = FALSE]
+      matched_asc[[length(matched_asc) + 1]] <- aggregated_rtc_asc_farms[,,,asc_match_idx[length(asc_match_idx)], drop = FALSE]
+      matched_dsc[[length(matched_dsc) + 1]] <- aggregated_rtc_dsc_farms[,,,dsc_match_idx[length(dsc_match_idx)], drop = FALSE]
+      matched_dsc_times <- c(matched_dsc_times, dsc_time)
+      matched_asc_times <- c(matched_asc_times, asc_time)
+      matched_times <- c(matched_times, t1)
+    }
+  }
+}
+
+
+# Combine each set and assign matched times
+combine_stars_with_time <- function(obj_list, times) {
+  if (length(obj_list) > 0) {
+    merged <- do.call(c, c(obj_list, along = "time"))
+    #st_dimensions(merged)$time <- times
+    merged <- st_set_dimensions(merged, "time", values = times, names = "time")
+    return(merged)
+  } else {
+    return(NULL)
+  }
+}
+matched_times <- as.POSIXct(matched_times, origin = "1970-01-01", tz = "UTC")
+
+lai_merged <- combine_stars_with_time(matched_lai, matched_times)
+asc_merged <- combine_stars_with_time(matched_asc, matched_times)
+dsc_merged <- combine_stars_with_time(matched_dsc, matched_times)
+
+
+if (!is.null(lai_merged) && !is.null(asc_merged) && !is.null(dsc_merged)) {
+  merged_all_rtc <- c(asc_merged, dsc_merged, along="band")
+} else {
+  merged_all_rtc <- NULL
+}
+
+
+######################## Reshape the data to be in 2D format
+# Convert to data frames & target to long format
+predictors_df <- as.data.frame(merged_all_rtc) #, long = TRUE
+target_df <- as.data.frame(lai_merged)
+
+# Add day_of_year
+predictors_df$day_of_year <- yday(predictors_df$time)
+target_df$day_of_year <- yday(target_df$time)
+
+
+# Pivot to wide so each variable is a column
+predictors_wide <- predictors_df %>%
+  pivot_wider(
+    id_cols = c(geometry, day_of_year),   #  explicitly keep these
+    names_from = band,
+    values_from = backscatter
+  )
+
+
+# Join predictors and target
+final_df <- left_join(predictors_wide, target_df, by = c("geometry", "day_of_year"))
+final_df_clean <- final_df %>% drop_na()
+
+
+######################### Modeling 
+
+final_df_clean <- st_as_sf(final_df_clean, crs = st_crs(lai_merged))
+
+
+# Get centroid coordinates
+centroids <- st_centroid(final_df_clean)
+
+# Extract x and y in meters (works if CRS is projected)
+coords <- st_coordinates(centroids)
+
+# Add x and y to your data
+final_df_clean$x <- coords[,1]
+final_df_clean$y <- coords[,2]
+
+# Create 5km spatial blocks
+block_size <- 5000  # 5 km
+final_df_clean$block <- paste0(
+  floor(final_df_clean$x / block_size), "_",
+  floor(final_df_clean$y / block_size) 
+)
+
+# Get unique block IDs and assign letters
+unique_blocks <- unique(final_df_clean$block)
+sorted_blocks <- sort(unique_blocks)
+
+# Create a named vector of new labels
+new_labels <- LETTERS[1:length(sorted_blocks)]  # A, B, C, ...
+names(new_labels) <- sorted_blocks
+
+# Apply the new labels
+final_df_clean$block <- new_labels[final_df_clean$block]
+
+python_data <- read.csv("./final_df_python.csv")
+
+
+# Visualize blocks 
+table(final_df_clean$block)  
+plot(final_df_clean["block"])  
+  
+
+############# Prepare data for modeling
+# Define response and predictors
+target_var <- "lai"  
+predictors <- setdiff(names(final_df_clean), c("geometry", "block", "x", "y", "time","day_of_year", target_var))
+
+# Filter complete cases
+model_data <- final_df_clean %>%
+  dplyr::select(all_of(c(target_var, predictors, "block"))) %>%
+  st_drop_geometry() %>%
+  na.omit()
+
+
+############ Spatial Cross-Validation with Random Forest
+# Create spatial CV folds based on blocks
+set.seed(2025)
+folds <- groupKFold(model_data$block, k = 5)  
+
+# Train control
+train_ctrl <- trainControl(
+  method = "cv",
+  index = folds,
+  savePredictions = "final"
+)
+
+# Train Random Forest
+rf_model <- train(
+  as.formula(paste(target_var, "~", paste(predictors, collapse = "+"))),
+  data = model_data,
+  method = "ranger",
+  trControl = train_ctrl,
+  importance = "impurity" # permutation or impurity
+)
+
+preds <- rf_model$pred
+mse <- mean((preds$obs - preds$pred)^2)
+rmse <- sqrt(mse)
+
+cat("Mean MSE:", mse,  "\nMean RMSE:", rmse, "\n")
+
+# Extract Feature importance 
+importance_df <- varImp(rf_model)$importance
+
+# If it's not a tibble/data frame with Feature column, convert it
+importance_df$Feature <- rownames(importance_df)
+rownames(importance_df) <- NULL
+
+# Sort by importance
+importance_df <- importance_df[order(importance_df$Overall, decreasing = TRUE), ]
+
+ggplot(importance_df, aes(x = reorder(Feature, Overall), y = Overall)) +
+  geom_bar(stat = "identity", aes(fill = Overall)) +
+  scale_fill_viridis_c(option = "viridis") +
+  coord_flip() +
+  labs(
+    title = "Feature Importances from Random Forest",
+    x = "Feature",
+    y = "Importance"
+  ) +
+  theme_minimal(base_size = 14)
