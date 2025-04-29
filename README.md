@@ -1,4 +1,5 @@
 # Raster-Vector Data Cubes for Earth Observation
+### [EGU 2025: SPM101](https://meetingorganizer.copernicus.org/EGU25/session/55010)
 
 Geospatial datasets can be represented as either raster or vector data cubes, depending on the workflow requirements. Raster cubes store multi-dimensional arrays with coordinates like longitude and latitude, capturing the spatial aspects of a dataset. On the other hand, vector data, represented as geometry objects such as points, lines, and polygons, is traditionally stored as tables. Vector data cubes generalize this concept by having multi-dimensional arrays that include a geometry dimension to represent the spatial domain. 
 
