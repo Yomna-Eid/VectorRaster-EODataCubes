@@ -2,5 +2,5 @@
 **/.ipynb_checkpoints/
 Data/
 .vscode
-DS_Store
+.DS_Store
 Manifest.toml
