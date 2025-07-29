@@ -3,4 +3,6 @@
 Data/
 .vscode
 .DS_Store
+.CondaPkg
+CondaPkg.toml
 Manifest.toml

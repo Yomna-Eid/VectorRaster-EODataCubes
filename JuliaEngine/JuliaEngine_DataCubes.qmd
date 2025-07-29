@@ -1,0 +1,278 @@
+---
+title: "Raster and Vector Data Cubes Across Spatial Data Science Languages"
+subtitle: "Introduction to vector data cubes in Python, R and Julia"
+date: 2025-06-23
+author: 
+  - name: Yomna Eid
+    affiliations:
+    - ref: unimün
+  - name: Mohammad Alasawedah
+    affiliations: 
+    - ref: unimün
+  - name: Abhishek Singh
+    affiliations: 
+    - ref: eurac
+  - name: Felix Cremer
+    affiliations: 
+    - ref: mpi
+  - name: Lazaro Alonso
+    affiliations: 
+    - ref: mpi
+affiliations:
+- id: unimün
+  name: University of Münster 
+- id: eurac
+  name: Eurac Research
+- id: mpi
+  name: Max-Planck Institute for Biogeochemistry
+format:
+  html:
+    code-fold: false
+  pdf:
+    pdf-engine: xelatex
+theme:
+  light: flatly
+  dark: darkly
+toc: true
+number-sections: true
+documentclass: article
+engine: julia
+julia:
+  exeflags: ["--project=@."]
+---
+
+# Introdution to Raster and Vector Data Cubes
+
+In this notebook, we convert a raster data cube covering a large spatial extent to a vector data cube containing only the spatial areas of interest. Observe how geospatial features, or data associated with those features, change over time. 
+
+Here we present the code for analysis in R and Python.
+
+## Install PythonCall and RCall
+
+When using the `julia` engine use the above packages for a better interoperability across languages.
+
+::: {.panel-tabset}
+
+## Installation
+```{julia}
+#| output: false
+#| eval: true
+using Pkg
+Pkg.add("PythonCall")
+Pkg.add("RCall")
+Pkg.add("CondaPkg")
+```
+
+## Imports
+```{julia}
+#| output: false
+import PythonCall
+import RCall
+```
+:::
+
+
+## Install and loading packages for Julia, R and Python
+
+::: {.panel-tabset group="language"}
+
+## Julia
+
+```{julia}
+#| output: true
+#| eval: true
+Pkg.add([
+    "Glob",
+    "Dates",
+    "DataFrames",
+    "DimensionalData",
+    "Shapefile",
+    "GeometryOps",
+    "ArchGDAL",
+    "GeoInterface",
+    "Proj",
+    "Statistics",
+    "CairoMakie",
+    "LibGEOS",
+    "IntervalSets",
+    "Tyler",
+    ]
+    )
+
+#the bleeding edge devs (soon to be merge)
+Pkg.add(url="https://github.com/rafaqz/Rasters.jl", rev="as/vectordatacubes")
+```
+
+start using the packages
+
+```{julia}
+using Glob
+using Dates
+using Statistics
+using DimensionalData
+using DataFrames
+# rasters
+using Rasters
+using Shapefile
+using Proj
+import ArchGDAL
+import GeometryOps as GO
+using IntervalSets
+import GeoInterface as GI
+import LibGEOS
+# for plotting
+using CairoMakie
+using Tyler
+using Tyler.TileProviders  # for map tiles providers
+set_theme!(theme_light(); size = (650, 350), fontsize=12.5)
+```
+
+## R
+
+Note the following:
+
+- On MacOS you first need to install https://www.xquartz.org !
+- The following has been tested with `R 4.5.1 (2025-06-13)`.
+
+
+```{r}
+# If the libraries are not available, install them
+packages <- c("terra", "lubridate", "stars", "ggplot2", "caret", "ranger", "dplyr", "tidyr")
+for (p in packages){
+  if (!requireNamespace(p, quietly = TRUE)){
+    install.packages(p, repos = "https://cran.uni-muenster.de/")
+  }
+}
+lapply(packages, library, character.only = TRUE);
+```
+
+## Python
+
+We install Python packages via `CondaPkg.jl`
+```{julia}
+#| output: true
+#| eval: true
+using CondaPkg
+CondaPkg.add([
+    "numpy",
+    "pandas",
+    "xarray",
+    "geopandas",
+    "rasterio",
+    "rioxarray",
+    "shapely",
+    "matplotlib",
+    "folium",
+    "leafmap",
+    ]
+    )
+```
+
+Now, support for Vector data cubes in Xarray is provided by `Xvec`, which can also be installed via the `conda-forge` channel. See https://xvec.readthedocs.io/en/stable/#installing for more information.
+
+```{julia}
+#| output: false
+#| eval: true
+CondaPkg.add("xvec")
+```
+
+And import them as usual
+
+```{python}
+import os
+import string
+from glob import glob
+import pandas as pd
+import numpy as np
+import xarray as xr
+import geopandas as gpd
+import xvec
+# import rasterio
+# import rioxarray as rio
+import shapely.geometry
+from shapely.geometry import Point
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import folium
+import leafmap.foliumap as leafmap
+```
+
+:::
+
+Now, let's test the 3 languages!
+
+::: {.panel-tabset group="language"}
+
+## Julia
+Create some data in Julia:
+
+```{julia}
+data = sin.(0:0.1:4pi);
+```
+
+## R
+Then plot it in R by interpolating the `data` variable from Julia into `R` via
+the `$` syntax:
+
+```{r}
+plot($data)
+```
+
+The same `$` syntax can be used to interpolate Julia variables into Python code as well:
+
+## Python
+```{python}
+len($data)
+```
+
+```{python}
+import numpy as np
+np.sqrt(len($data))
+```
+
+:::
+
+## Load files
+
+```{julia}
+path_lai = joinpath(@__DIR__, "../Data/lai_cropped/");
+```
+
+```{julia}
+#define functions to read the data + read dates from the file name
+function read_files(path)
+    ras_files = glob("*.tif", path)
+    ras_dates = get_dates.(ras_files)
+    ras = Raster.(ras_files, lazy=true, name=:data)
+    return cat(ras..., dims=Ti(ras_dates))
+end
+function get_dates(x)
+    return DateTime(split(x, r"[_.]")[end-1], "yyyymmddTHHMMSS")
+end
+
+lai_ds = read_files(path_lai)
+```
+
+## Plot one time stamp
+
+```{julia}
+plot(lai_ds[Ti=1]; colormap=:magma);
+```
+
+## Plots
+
+And now
+
+```{julia}
+# london
+provider = Tyler.TileProviders.Esri(:WorldImagery)
+london = Rect2f(-0.0921, 51.5, 0.04, 0.025)
+
+with_theme(theme_dark()) do
+  m=Tyler.Map(london; provider, figure=Figure(; size=(650,400)))
+  m.axis.aspect=650/400
+  hidedecorations!(m.axis)
+  hidespines!(m.axis)
+  m
+end
+```
