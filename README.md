@@ -1,6 +1,7 @@
 # Raster-Vector Data Cubes for Earth Observation
 ### On 01.05.2025 @ [European Geosciences Union (EGU) 2025: SPM101](https://meetingorganizer.copernicus.org/EGU25/session/55010)
 ### On 23.06.2025 @ [ESA Living Planet Symposium (LPS) 2025: D.03.30 DEMO](https://lps25.esa.int/programme/programme-session/?id=F8A45A91-6492-462A-8FAB-C97EF4E61E4A)
+### On 01.10.2025 @ [ESA Big Data from Space (BiDS) 2025: DEMO](https://bids25-signup.esa.int/agenda?date=2025-10-01&showSession=749315)
 &nbsp;
 
 #### Description:
